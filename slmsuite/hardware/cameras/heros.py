@@ -576,13 +576,22 @@ class HerosCamera(Camera):
 
     ### Configuration
 
-    def _configure_hw(self, fn) -> None:
+    def _configure_hw(self, fn, stop_timeout_s: float = 5.0) -> None:
         """
-        Stop acquisition if running, call fn(), then re-arm.
+        Stop acquisition if running, wait for it to stop, call fn(), then re-arm.
 
         Used by all hardware configuration setters. ``CameraTemplate.configure()``
-        refuses to apply settings while acquisition is running, so we stop the device
-        first and restore the running state after.
+        (called internally by every property setter) acquires the device acquisition lock
+        and returns ``False`` -- causing a ``RuntimeError`` -- if ``acquisition_running``
+        is still ``True``. ``stop()`` signals the acquisition thread to exit, but the
+        thread sets ``acquisition_running = False`` asynchronously when it emits
+        ``acquisition_stopped``. We therefore poll ``cam.acquisition_running`` after
+        ``stop()`` to ensure the device has fully quiesced before calling ``fn()``.
+
+        Args:
+            fn: zero-argument callable that applies the hardware configuration.
+            stop_timeout_s: how long to wait for the acquisition to stop before
+                proceeding anyway (and likely failing in ``fn()``).
         """
         was_running = self._acquisition_running
         if was_running:
@@ -590,6 +599,21 @@ class HerosCamera(Camera):
                 self.cam.stop()
             except Exception as exc:
                 warnings.warn(f"Could not stop acquisition before reconfiguring: {exc}")
+            # wait for device to confirm acquisition has stopped
+            deadline = time.monotonic() + stop_timeout_s
+            while time.monotonic() < deadline:
+                try:
+                    if not self.cam.acquisition_running:
+                        self._acquisition_running = False
+                        break
+                except Exception:
+                    break
+                time.sleep(0.05)
+            else:
+                warnings.warn(
+                    f"HerosCamera: acquisition did not stop within {stop_timeout_s} s; "
+                    "configuration may fail."
+                )
         fn()
         if was_running:
             self._arm(verbose=False)
