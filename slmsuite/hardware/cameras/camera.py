@@ -3,6 +3,7 @@ Abstract camera functionality.
 """
 import time
 import asyncio
+from collections.abc import Callable
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
@@ -98,6 +99,22 @@ class Camera(_Picklable, ABC):
     _pickle_data = [
         "last_image",
     ]
+
+    name: str
+    shape: tuple[int, int]
+    default_shape: tuple[int, int]
+    bitdepth: int
+    dtype: np.dtype
+    pitch_um: np.ndarray | None
+    woi: tuple[int, int, int, int]
+    exposure_s: float
+    exposure_bounds_s: tuple[float, float] | None
+    averaging: int | None
+    hdr: tuple[int, int] | None
+    capture_attempts: int
+    transform: Callable[[np.ndarray], np.ndarray]
+    last_image: np.ndarray | None
+    viewer: "_CameraViewer | None"
 
     @abstractmethod
     def __init__(

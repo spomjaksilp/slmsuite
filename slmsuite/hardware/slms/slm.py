@@ -132,6 +132,23 @@ class SLM(_Picklable, ABC):
         "display",
     ]
 
+    name: str
+    shape: tuple[int, int]
+    bitdepth: int
+    settle_time_s: float
+    pitch_um: np.ndarray
+    pitch: np.ndarray
+    wav_um: float
+    wav_design_um: float
+    phase_scaling: float
+    dtype: np.dtype
+    grid: list[np.ndarray]
+    source: dict
+    phase: np.ndarray
+    display: np.ndarray
+    phase_correct: bool
+    settle: bool
+
     @abstractmethod
     def __init__(
         self,

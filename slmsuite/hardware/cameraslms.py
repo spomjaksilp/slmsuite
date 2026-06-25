@@ -54,6 +54,12 @@ class CameraSLM(_Picklable):
     _pickle = ["name", "cam", "slm", "mag"]
     _pickle_data = []
 
+    cam: "Camera"
+    slm: "SLM"
+    name: str
+    mag: float
+    calibrations: dict
+
     def __init__(self, cam, slm, mag=1):
         """
         Initialize an SLM linked to a camera, with given magnification between the
@@ -228,6 +234,8 @@ class FourierSLM(CameraSLM):
     """
     _pickle = ["name", "cam", "slm", "mag"]
     _pickle_data = ["calibrations"]
+
+    _wavefront_calibration_window_multiplier: int
 
     def __init__(self, *args, **kwargs):
         r"""See :meth:`CameraSLM.__init__`."""
