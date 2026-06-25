@@ -177,7 +177,7 @@ class MultiplaneHologram(Hologram):
 
         # Then update each of the child flags.
         for h in self.holograms:
-            h.flags.update(self.flags)
+            h.flags = {**h.flags, **self.flags}
 
     def _update_weights(self, *args, **kwargs):
         for h in self.holograms: h._update_weights(*args, **kwargs)

@@ -463,6 +463,19 @@ class FourierSLM(CameraSLM):
     def _get_calibration_metadata(self):
         return self.pickle(attributes=False, metadata=True)      # Pickle without heavy data.
 
+    def _finalize_calibration(self, key: str, data: dict) -> dict:
+        """Stores ``data`` as ``self.calibrations[key]`` with standard metadata merged in.
+
+        Args:
+            key: calibration key, e.g. ``"fourier"``, ``"pixel"``.
+            data: calibration data to store.
+
+        Returns:
+            The stored ``self.calibrations[key]`` dict.
+        """
+        self.calibrations[key] = {**data, **self._get_calibration_metadata()}
+        return self.calibrations[key]
+
     ### Settle Time Calibration ###
 
     def settle_calibrate(
@@ -537,11 +550,10 @@ class FourierSLM(CameraSLM):
             image = self.cam.get_image()
             results.append(analysis.take(image, point, size, centered=True, integrate=True))
 
-        self.calibrations["settle"] = {
-            "times" : times,
-            "data" : np.array(results)
-        }
-        self.calibrations["settle"].update(self._get_calibration_metadata())
+        self._finalize_calibration("settle", {
+            "times": times,
+            "data": np.array(results),
+        })
 
         self.settle_calibration_process(plot=False)
 
@@ -617,7 +629,7 @@ class FourierSLM(CameraSLM):
             "relax_time" : relax_time,
             "communication_time" : com_time
         }
-        self.calibrations["settle"].update(processed)
+        self.calibrations["settle"] = {**self.calibrations["settle"], **processed}
 
         return processed
 
@@ -832,13 +844,12 @@ class FourierSLM(CameraSLM):
         if True: iterations.close()
 
         # Assemble the return dictionary.
-        self.calibrations["pixel"] = {
-            "levels" : levels,
-            "periods" : periods,
-            "orders" : orders,
-            "data": data
-        }
-        self.calibrations["pixel"].update(self._get_calibration_metadata())
+        self._finalize_calibration("pixel", {
+            "levels": levels,
+            "periods": periods,
+            "orders": orders,
+            "data": data,
+        })
 
         # Process by default because we currently don't have any arguments.
         # self.pixel_calibration_process()
@@ -1074,12 +1085,7 @@ class FourierSLM(CameraSLM):
             [M[1, 0] * scaling[0], M[1, 1] * scaling[1]],
         ])
 
-        self.calibrations["fourier"] = {
-            "M": M,
-            "b": b,
-            "a": a
-        }
-        self.calibrations["fourier"].update(self._get_calibration_metadata())
+        self._finalize_calibration("fourier", {"M": M, "b": b, "a": a})
 
         return self.calibrations["fourier"]
 
@@ -1180,12 +1186,7 @@ class FourierSLM(CameraSLM):
         a = format_2vectors([0,0])
         b = format_2vectors(b)
 
-        self.calibrations["fourier"] = {
-            "M": M,
-            "b": b,
-            "a": a
-        }
-        self.calibrations["fourier"].update(self._get_calibration_metadata())
+        self._finalize_calibration("fourier", {"M": M, "b": b, "a": a})
 
         # Set the camera's virtual calibration if it is not already set.
         if hasattr(self.cam, "set_affine") and not hasattr(self.cam, "M"):
@@ -1929,7 +1930,10 @@ class FourierSLM(CameraSLM):
                 stat_groups=["computational_spot", "experimental_spot",],
             )
             if "wavefront_zernike" in self.calibrations:
-                self.calibrations["wavefront_zernike"]["weights"] = hologram.get_weights()
+                self.calibrations["wavefront_zernike"] = {
+                    **self.calibrations["wavefront_zernike"],
+                    "weights": hologram.get_weights(),
+                }
 
         no_perturbation = (
             perturbation is None or
@@ -2019,18 +2023,17 @@ class FourierSLM(CameraSLM):
         metric_stats.append(callback())
         # position_stats.append(calibration_points)
 
-        self.calibrations["wavefront_zernike"] = {
+        self._finalize_calibration("wavefront_zernike", {
             "initial_points": initial_points,
             "zernike_indices": zernike_indices,
             "corrected_spots": calibration_points,
             "last_result": result,
-            "calibration_points_ij" : calibration_points_ij,
-            "spot_integration_width_ij" : spot_integration_width_ij,
-            "metric_stats" : metric_stats,
+            "calibration_points_ij": calibration_points_ij,
+            "spot_integration_width_ij": spot_integration_width_ij,
+            "metric_stats": metric_stats,
             # "position_stats" : position_stats,
-            "weights" : hologram.get_weights(),
-        }
-        self.calibrations["wavefront_zernike"].update(self._get_calibration_metadata())
+            "weights": hologram.get_weights(),
+        })
 
         # return hologram
 
@@ -2601,9 +2604,7 @@ class FourierSLM(CameraSLM):
         # If we're starting fresh, remove the old calibration such that this does not
         # muddle things. If we're only testing, the stored data above will be reinstated.
         if fresh_calibration:
-            self.slm.source.pop("amplitude", "First calibration.")
-            self.slm.source.pop("phase", "First calibration.")
-            self.slm.source.pop("r2", "First calibration.")
+            self.slm.reset_source("amplitude", "phase", "r2")
 
         # Parse phase_steps
         if phase_steps is not None:
@@ -3307,8 +3308,7 @@ class FourierSLM(CameraSLM):
             result = measure(scheduling[:, test_index], plot=plot_fits)
 
             # Reset the phase and amplitude of the SLM to the stored data.
-            self.slm.source["amplitude"] = amplitude
-            self.slm.source["phase"] = phase
+            self.slm.update_source({"amplitude": amplitude, "phase": phase})
 
             return result
 
@@ -3336,8 +3336,7 @@ class FourierSLM(CameraSLM):
 
                         calibration_dict[key][i, coords[1, i], coords[0, i]] = result
 
-        self.calibrations["wavefront_superpixel"] = calibration_dict
-        self.calibrations["wavefront_superpixel"].update(self._get_calibration_metadata())
+        self._finalize_calibration("wavefront_superpixel", calibration_dict)
 
         return calibration_dict
 
@@ -3973,7 +3972,7 @@ class FourierSLM(CameraSLM):
 
         # Step 4.1: Load the correction to the SLM
         if apply:
-            self.slm.source.update(wavefront_calibration)
+            self.slm.update_source(wavefront_calibration)
 
         # Plot the result
         if plot:

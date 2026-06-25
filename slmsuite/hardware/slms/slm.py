@@ -1192,6 +1192,47 @@ class SLM(_Picklable, ABC):
 
         return self.source
 
+    def update_source(self, data: dict) -> dict:
+        """Merges new entries into :attr:`source`, replacing existing keys.
+
+        Use this to write measured or computed source data into the SLM, e.g.
+        after a wavefront calibration has produced an amplitude and phase map::
+
+            slm.update_source({"amplitude": amp_array, "phase": phase_array})
+
+        Args:
+            data: key-value pairs to merge into :attr:`source`.
+
+        Returns:
+            The updated :attr:`source` dict.
+        """
+        self.source = {**self.source, **data}
+        return self.source
+
+    def reset_source(self, *keys: str) -> dict:
+        """Removes the given keys from :attr:`source`.
+
+        Use this to clear previously stored calibration data before a fresh
+        measurement, or to delete a specific entry::
+
+            slm.reset_source("amplitude", "phase", "r2")   # clear wavefront data
+            slm.reset_source("phase")                       # clear phase only
+            slm.reset_source()                              # clear all source data
+
+        Unknown keys are silently ignored.
+
+        Args:
+            keys: names of keys to remove. If empty, clears :attr:`source` entirely.
+
+        Returns:
+            The updated :attr:`source` dict.
+        """
+        if not keys:
+            self.source = {}
+            return self.source
+        self.source = {k: v for k, v in self.source.items() if k not in keys}
+        return self.source
+
     def get_source_radius(self):
         """
         Extracts the source radius in normalized units for functions like

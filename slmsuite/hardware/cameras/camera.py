@@ -1344,10 +1344,10 @@ class Camera(_Picklable, ABC):
             base_phase -= base_correction
 
             def slm_set_z(z_val):
-                slm.source['phase'] = (
+                slm.update_source({"phase": (
                     base_correction +
                     zernike(slm, index=4, weight=z_val, use_mask=False)
-                )
+                )})
                 slm.set_phase(
                     base_phase,
                     settle=True
