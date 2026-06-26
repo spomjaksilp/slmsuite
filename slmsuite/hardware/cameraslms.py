@@ -100,6 +100,51 @@ class CameraSLM(_Picklable):
 
         self.calibrations = {}
 
+    def update_calibration(self, key: str, data: dict) -> dict:
+        """Merges new entries into ``self.calibrations[key]``, replacing existing keys.
+
+        Use this to append processed results to an existing calibration entry after
+        the initial measurement::
+
+            fs.update_calibration("settle", {"settle_time": 0.12, "relax_time": 0.03})
+
+        Args:
+            key: calibration key, e.g. ``"settle"``, ``"wavefront_zernike"``.
+            data: key-value pairs to merge into the existing entry.
+
+        Returns:
+            The updated ``self.calibrations[key]`` dict.
+
+        Raises:
+            KeyError: if ``key`` is not present in :attr:`calibrations`.
+        """
+        self.calibrations[key] = {**self.calibrations[key], **data}
+        return self.calibrations[key]
+
+    def reset_calibration(self, *keys: str) -> dict:
+        """Removes the given calibration keys from :attr:`calibrations`.
+
+        Use this to clear one or more stored calibrations before re-running them::
+
+            fs.reset_calibration("wavefront_superpixel", "wavefront_zernike")
+            fs.reset_calibration("fourier")
+            fs.reset_calibration()   # clear all calibrations
+
+        Unknown keys are silently ignored.
+
+        Args:
+            keys: names of calibration keys to remove. If empty, clears
+                :attr:`calibrations` entirely.
+
+        Returns:
+            The updated :attr:`calibrations` dict.
+        """
+        if not keys:
+            self.calibrations = {}
+            return self.calibrations
+        self.calibrations = {k: v for k, v in self.calibrations.items() if k not in keys}
+        return self.calibrations
+
     def plot(
             self,
             phase=None,
@@ -637,7 +682,7 @@ class FourierSLM(CameraSLM):
             "relax_time" : relax_time,
             "communication_time" : com_time
         }
-        self.calibrations["settle"] = {**self.calibrations["settle"], **processed}
+        self.update_calibration("settle", processed)
 
         return processed
 
@@ -1938,10 +1983,7 @@ class FourierSLM(CameraSLM):
                 stat_groups=["computational_spot", "experimental_spot",],
             )
             if "wavefront_zernike" in self.calibrations:
-                self.calibrations["wavefront_zernike"] = {
-                    **self.calibrations["wavefront_zernike"],
-                    "weights": hologram.get_weights(),
-                }
+                self.update_calibration("wavefront_zernike", {"weights": hologram.get_weights()})
 
         no_perturbation = (
             perturbation is None or
