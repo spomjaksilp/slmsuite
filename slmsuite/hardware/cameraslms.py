@@ -227,6 +227,25 @@ def _blaze_offset(grid, vector, offset=0):
     return blaze(grid=grid, vector=vector) + offset
 
 
+def _default_grid_origin(shape, pitch):
+    """
+    Returns the ``(x, y)`` grid value at pixel ``[0, 0]`` of an SLM grid that has not
+    been recentered, matching the construction in :class:`~slmsuite.hardware.slms.slm.SLM`.
+    """
+    return -np.asarray(pitch, dtype=float) * (np.flip(np.asarray(shape)) - 1) / 2
+
+
+def _superpixel_grid(shape, pitch, origin):
+    """
+    Builds ``(x_grid, y_grid)`` of the given ``shape`` with the same affine form as
+    :attr:`~slmsuite.hardware.slms.slm.SLM.grid`, but with pixel ``[0, 0]`` at ``origin``.
+    This avoids reading the (possibly remote and recentered) grid of the SLM.
+    """
+    x = origin[0] + pitch[0] * np.arange(shape[1])
+    y = origin[1] + pitch[1] * np.arange(shape[0])
+    return np.meshgrid(x, y)
+
+
 class FourierSLM(CameraSLM):
     r"""
     Class for an SLM and camera separated by a Fourier transform.
@@ -254,6 +273,14 @@ class FourierSLM(CameraSLM):
             :meth:`~slmsuite.hardware.cameraslms.FourierSLM.wavefront_calibration_superpixel_process()`.
 
             This data is critical for crisp holography.
+        "wavefront_superpixel_processed" : dict
+            Processed superpixel wavefront calibration (``phase``, ``amplitude``,
+            ``r2``, ``r2_threshold``, plus the processing parameters), as returned by
+            :meth:`~slmsuite.hardware.cameraslms.FourierSLM.wavefront_calibration_superpixel_process()`.
+            Save it with :meth:`save_calibration()` and reapply it in a later session
+            with :meth:`load_calibration()` and
+            :meth:`~slmsuite.hardware.cameraslms.FourierSLM.wavefront_calibration_apply()`,
+            without processing again.
         "pixel" : dict
             Raw data for measuring the crosstalk and :math:`V_\pi` of sections of the
             SLM via measurements on the diffractive orders of binary gratings.
@@ -2676,6 +2703,11 @@ class FourierSLM(CameraSLM):
         plot_fits = plot >= 1
         plot_everything = plot >= 2
 
+        # Read the grid once: on a remote SLM every attribute read is a transfer, and the
+        # stored origin lets processing rebuild the exact frame these offsets refer to.
+        slm_grid = tuple(self.slm.grid)
+        slm_source = self.slm.source
+
         # Build the calibration dict.
         calibration_dict = {
             "__version__" : __version__,
@@ -2688,9 +2720,10 @@ class FourierSLM(CameraSLM):
             "interference_size" : interference_size,
             "interference_window" : interference_window,
             "previous_phase_correction": (
-                False if "phase" not in self.slm.source else np.copy(self.slm.source["phase"])
+                False if "phase" not in slm_source else np.copy(slm_source["phase"])
             ),
             "scheduling" : scheduling,
+            "grid_origin" : np.array([slm_grid[0][0, 0], slm_grid[1][0, 0]]),
         }
 
         keys = [
@@ -2731,7 +2764,7 @@ class FourierSLM(CameraSLM):
             reference_blaze, target_blaze : (float, float)
                 Blaze vector(s) for the given superpixel.
             """
-            matrix = blaze(self.slm, field_blaze)
+            matrix = blaze(slm_grid, field_blaze)
 
             if reference_phase is not None:
                 for i in range(num_points):
@@ -2743,7 +2776,7 @@ class FourierSLM(CameraSLM):
                                 reference_superpixels_coords[1, i], 1
                             ]) * superpixel_size,
                             _blaze_offset,
-                            self.slm,
+                            slm_grid,
                             # shift=True,
                             vector=reference_blaze[:, [i]],
                             offset=reference_phase  # This is usually zero when not None.
@@ -2761,7 +2794,7 @@ class FourierSLM(CameraSLM):
                                 target_coords[1, i], 1
                             ]) * superpixel_size,
                             _blaze_offset,
-                            self.slm,
+                            slm_grid,
                             # shift=True,
                             vector=target_blaze[:, [i]],
                             offset=phase_baseline + (target_phase if np.isscalar(target_phase) else target_phase[i])
@@ -3632,16 +3665,30 @@ class FourierSLM(CameraSLM):
             measured power distribution. If the noisefloor is flat enough, the
             power is shifted to have a minimum at zero.
         apply : bool
-            Whether to apply the processed calibration to the associated SLM.
+            Whether to apply the processed calibration to the associated SLM via
+            :meth:`wavefront_calibration_apply()`.
             Otherwise, this function only returns and maybe
             plots these results. Defaults to ``True``.
         plot : bool
-            Whether to enable debug plots.
+            Whether to enable debug plots. This calls
+            :meth:`~slmsuite.hardware.slms.slm.SLM.plot_source()`, so for a remote SLM the
+            plot is drawn on the remote side.
 
         Returns
         -------
         dict
-            The updated source dictionary containing the processed source amplitude and phase.
+            The processed source amplitude and phase. This is also stored as
+            :attr:`calibrations` ``["wavefront_superpixel_processed"]``, which can be
+            saved with :meth:`save_calibration()` and reapplied later with
+            :meth:`wavefront_calibration_apply()` without processing again.
+
+        Note
+        ~~~~
+        The blaze of each superpixel is evaluated in the grid frame recorded during
+        calibration (``"grid_origin"``), not on the current
+        :attr:`~slmsuite.hardware.slms.slm.SLM.grid`, which
+        :meth:`~slmsuite.hardware.slms.slm.SLM.fit_source_amplitude()` may have recentered.
+        Calibrations without a recorded frame assume the default centered grid.
         """
         # Step 0: Initialize helper variables and functions.
         if "wavefront_superpixel" in self.calibrations:
@@ -3704,6 +3751,10 @@ class FourierSLM(CameraSLM):
             for key in keys:
                 correction_dict.update({key: data[key][index]})
 
+            for key in ["grid_origin", "previous_phase_correction"]:
+                if key in data:
+                    correction_dict[key] = data[key]
+
             return self._wavefront_calibration_superpixel_process_r001(
                 correction_dict,
                 smooth=smooth,
@@ -3749,6 +3800,19 @@ class FourierSLM(CameraSLM):
         if len(data) == 0:
             raise RuntimeError("No raw wavefront data to process. Either load data or calibrate.")
 
+        # Read SLM geometry once; each attribute read is a transfer for a remote SLM.
+        slm_shape = tuple(int(n) for n in self.slm.shape)
+        pitch = np.array(self.slm.pitch, dtype=float)
+
+        if "grid_origin" in data:
+            grid_origin = np.asarray(data["grid_origin"], dtype=float)
+        else:
+            grid_origin = _default_grid_origin(slm_shape, pitch)
+            warnings.warn(
+                "Wavefront calibration has no recorded 'grid_origin'; assuming the "
+                "default centered SLM grid."
+            )
+
         NX = data["NX"]
         NY = data["NY"]
         nxref = data["nxref"]
@@ -3779,7 +3843,7 @@ class FourierSLM(CameraSLM):
         r2s = r2
 
         r2s_large = cv2.resize(r2s, (w, h), interpolation=cv2.INTER_NEAREST)
-        r2s_large = r2s_large[: self.slm.shape[0], : self.slm.shape[1]]
+        r2s_large = r2s_large[: slm_shape[0], : slm_shape[1]]
 
         # Step 2: Process the measured amplitude
         # Fix the reference pixel by averaging the 8 surrounding pixels
@@ -3831,7 +3895,7 @@ class FourierSLM(CameraSLM):
         pwr_norm[pwr_norm < 0] = 0
 
         pwr_large = cv2.resize(pwr_norm, (w, h), interpolation=cv2.INTER_CUBIC)
-        pwr_large = pwr_large[: self.slm.shape[0], : self.slm.shape[1]]
+        pwr_large = pwr_large[: slm_shape[0], : slm_shape[1]]
 
         pwr_large[np.isnan(pwr_large)] = 0
         pwr_large[~np.isfinite(pwr_large)] = 0
@@ -3902,8 +3966,8 @@ class FourierSLM(CameraSLM):
                     source = []
 
                     (dx0, dy0) = (
-                        2 * np.pi * (nx-nxref) * superpixel_size * self.slm.pitch[0],
-                        2 * np.pi * (ny-nyref) * superpixel_size * self.slm.pitch[1],
+                        2 * np.pi * (nx-nxref) * superpixel_size * pitch[0],
+                        2 * np.pi * (ny-nyref) * superpixel_size * pitch[1],
                     )
 
                     # Loop through the adjacent superpixels (including diagonals).
@@ -3961,18 +4025,18 @@ class FourierSLM(CameraSLM):
                         pathing[ny, nx] = ny
 
         # Step 3.2: Make the SLM-sized correction using the compressed data from each superpixel.
-        phase = np.zeros(self.slm.shape)
-        for nx in range(NX):
-            for ny in range(NY):
-                imprint(
-                    phase,
-                    np.array([nx, 1, ny, 1]) * superpixel_size,
-                    _blaze_offset,
-                    self.slm,
-                    # shift=True,
-                    vector=(kx[ny, nx], ky[ny, nx]),
-                    offset=offset[ny, nx],
-                )
+        # Equivalent to imprinting _blaze_offset per superpixel, but vectorized and on a
+        # locally built grid in the calibration frame.
+        (x_grid, y_grid) = _superpixel_grid(slm_shape, pitch, grid_origin)
+
+        def upsample(matrix):
+            matrix = np.repeat(np.repeat(matrix, superpixel_size, axis=0), superpixel_size, axis=1)
+            return matrix[: slm_shape[0], : slm_shape[1]]
+
+        phase = (
+            2 * np.pi * (upsample(kx) * x_grid + upsample(ky) * y_grid)
+            + upsample(offset)
+        )
 
         # Step 3.3: Iterative smoothing helps to preserve slopes while avoiding superpixel boundaries.
         # Consider, for instance, a fine blaze which smooths flat.
@@ -4005,30 +4069,90 @@ class FourierSLM(CameraSLM):
         phase = image_reduce_wraps(phase, mask=pwr_large)
 
         # Add the old phase correction if it's there.
+        # This is False (or an object array of None) when there was no correction.
+        previous_phase_correction = data.get("previous_phase_correction", None)
         if (
-            "previous_phase_correction" in data and
-            data["previous_phase_correction"] is not None
+            isinstance(previous_phase_correction, np.ndarray) and
+            previous_phase_correction.dtype != object and
+            previous_phase_correction.shape == phase.shape
         ):
-            phase += data["previous_phase_correction"]
+            phase += previous_phase_correction
 
         # Step 4: Data export.
-        # Build the final dict.
+        # Build the final dict, keeping the processing parameters for provenance.
         wavefront_calibration = {
             "phase": phase,
             "amplitude": amp_large,
             "r2": r2s_large,
             "r2_threshold": r2_threshold,
+            "smooth": smooth,
+            "remove_vortices": remove_vortices,
+            "remove_blaze": remove_blaze,
+            "remove_background": remove_background,
+            "superpixel_size": superpixel_size,
+            "grid_origin": grid_origin,
         }
+        self._finalize_calibration("wavefront_superpixel_processed", wavefront_calibration)
 
         # Step 4.1: Load the correction to the SLM
         if apply:
-            self.slm.update_source(wavefront_calibration)
+            self.wavefront_calibration_apply()
 
         # Plot the result
         if plot:
             self.slm.plot_source(source=wavefront_calibration)
 
         return wavefront_calibration
+
+    def wavefront_calibration_apply(self, key="wavefront_superpixel_processed"):
+        """
+        Writes a processed wavefront calibration into
+        :attr:`~slmsuite.hardware.slms.slm.SLM.source` with a single
+        :meth:`~slmsuite.hardware.slms.slm.SLM.update_source()` call.
+        Use this to reapply a correction saved with :meth:`save_calibration()` and
+        loaded with :meth:`load_calibration()`, without processing again::
+
+            fs.load_calibration("wavefront_superpixel_processed", file_path)
+            fs.wavefront_calibration_apply()
+
+        Parameters
+        ----------
+        key : str
+            Key of :attr:`calibrations` holding the processed calibration.
+
+        Returns
+        -------
+        dict
+            The source entries that were written.
+
+        Raises
+        ------
+        RuntimeError
+            If ``key`` is not in :attr:`calibrations`.
+        ValueError
+            If the stored phase does not match the shape of the SLM.
+        """
+        if key not in self.calibrations:
+            raise RuntimeError(
+                f"Could not find calibration '{key}'. Process or load a wavefront calibration first."
+            )
+        calibration = self.calibrations[key]
+
+        slm_shape = tuple(int(n) for n in self.slm.shape)
+        if np.shape(calibration["phase"]) != slm_shape:
+            raise ValueError(
+                f"Calibration '{key}' has shape {np.shape(calibration['phase'])}, "
+                f"but the SLM has shape {slm_shape}."
+            )
+
+        source = {
+            k: calibration[k]
+            for k in ("phase", "amplitude", "r2", "r2_threshold")
+            if k in calibration
+        }
+        self.slm.update_source(source)
+
+        return source
 
     def _wavefront_calibration_superpixel_plot_raw(self, index=0, r2_threshold=0, phase_detail=True):
         """

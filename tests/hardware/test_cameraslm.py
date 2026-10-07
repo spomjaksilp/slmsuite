@@ -553,3 +553,142 @@ class TestFourierSLM:
                 fs.kxyslm_to_ijcam(kxy),
                 fs_sim.kxyslm_to_ijcam(kxy),
             )
+
+
+_SUPERPIXEL_SIZE = 20   # Does not divide the 128 px test SLM, so edge clipping is exercised.
+
+
+def _synthetic_superpixel_calibration(slm, grid_origin=None, seed=0):
+    """Builds a release-0.0.1 style raw superpixel calibration with random fits."""
+    rng = np.random.default_rng(seed)
+    (NY, NX) = np.ceil(np.array(slm.shape) / _SUPERPIXEL_SIZE).astype(int)
+    shape = (NY, NX)
+
+    data = {
+        "__version__": "0.0.1",
+        "NX": NX,
+        "NY": NY,
+        "nxref": NX // 2,
+        "nyref": NY // 2,
+        "superpixel_size": _SUPERPIXEL_SIZE,
+        "power": rng.uniform(.5, 1, shape),
+        "normalization": np.ones(shape),
+        "background": np.zeros(shape),
+        "phase": rng.uniform(0, 2 * np.pi, shape),
+        "kx": rng.uniform(-1e-3, 1e-3, shape),
+        "ky": rng.uniform(-1e-3, 1e-3, shape),
+        "r2_fit": np.ones(shape),
+    }
+    if grid_origin is not None:
+        data["grid_origin"] = grid_origin
+    return data
+
+
+def _reference_superpixel_phase(slm, data):
+    """
+    Reference for step 3.2 of the superpixel processing: the per-superpixel ``imprint``
+    loop on the default SLM grid, applied to data with every ``r2_fit`` above threshold.
+    """
+    from slmsuite.hardware.cameraslms import _blaze_offset
+    from slmsuite.holography.toolbox import imprint
+
+    NX, NY = data["NX"], data["NY"]
+    nxref, nyref = data["nxref"], data["nyref"]
+
+    def average_neighbors(matrix):
+        y0, y1 = max(nyref - 1, 0), min(nyref + 2, NY)
+        x0, x1 = max(nxref - 1, 0), min(nxref + 2, NX)
+        block = matrix[y0:y1, x0:x1]
+        matrix[nyref, nxref] = (block.sum() - matrix[nyref, nxref]) / (block.size - 1)
+
+    kx, ky = np.copy(data["kx"]), np.copy(data["ky"])
+    real, imag = np.cos(data["phase"]), np.sin(data["phase"])
+    for matrix in (kx, ky, real, imag):
+        average_neighbors(matrix)
+    offset = np.arctan2(imag, real) + np.pi
+
+    phase = np.zeros(slm.shape)
+    for nx in range(NX):
+        for ny in range(NY):
+            imprint(
+                phase,
+                np.array([nx, 1, ny, 1]) * data["superpixel_size"],
+                _blaze_offset,
+                slm,
+                vector=(kx[ny, nx], ky[ny, nx]),
+                offset=offset[ny, nx],
+            )
+    return phase
+
+
+def _equal_up_to_constant(phase_a, phase_b):
+    """True if two phase patterns differ only by a global constant modulo 2 pi."""
+    difference = np.exp(1j * (phase_a - phase_b))
+    return np.allclose(difference, difference.flat[0], atol=1e-6)
+
+
+class TestWavefrontSuperpixelProcess:
+    """Tests for FourierSLM.wavefront_calibration_superpixel_process and its storage."""
+
+    @pytest.fixture
+    def fs(self, camera_small, slm_small):
+        return FourierSLM(camera_small, slm_small)
+
+    def _process(self, fs, data, **kwargs):
+        fs.calibrations["wavefront_superpixel"] = data
+        kwargs = {"smooth": False, "remove_blaze": False, "apply": False, **kwargs}
+        return fs.wavefront_calibration_superpixel_process(**kwargs)
+
+    def test_process_matches_imprint_loop(self, fs):
+        data = _synthetic_superpixel_calibration(fs.slm)
+        expected = _reference_superpixel_phase(fs.slm, data)
+
+        with pytest.warns(UserWarning, match="grid_origin"):
+            result = self._process(fs, data)
+
+        # imprint(clip=True) never writes the last row and column (window_slice clips the
+        # exclusive end to shape - 1), so the reference is only valid inside them.
+        assert _equal_up_to_constant(result["phase"][:-1, :-1], expected[:-1, :-1])
+
+    def test_process_ignores_recentered_slm_grid(self, fs):
+        origin = np.array([fs.slm.grid[0][0, 0], fs.slm.grid[1][0, 0]])
+        data = _synthetic_superpixel_calibration(fs.slm, grid_origin=origin)
+        before = self._process(fs, dict(data))["phase"]
+        # Shift the grid like SLM.fit_source_amplitude does.
+        fs.slm.grid[0] += 7 * fs.slm.pitch[0]
+        fs.slm.grid[1] -= 3 * fs.slm.pitch[1]
+
+        after = self._process(fs, dict(data))["phase"]
+
+        assert np.allclose(before, after)
+
+    def test_process_does_not_read_slm_grid(self, fs, monkeypatch):
+        origin = np.array([fs.slm.grid[0][0, 0], fs.slm.grid[1][0, 0]])
+        data = _synthetic_superpixel_calibration(fs.slm, grid_origin=origin)
+        reads = []
+        # A class-level property shadows the instance attribute, like a RemoteHERO stub.
+        monkeypatch.setattr(
+            type(fs.slm), "grid", property(lambda slm: reads.append(1)), raising=False
+        )
+
+        self._process(fs, data, smooth=True, remove_blaze=True)
+
+        assert reads == []
+
+    def test_saved_correction_reapplies_without_processing(self, fs, camera_small, slm_small, temp_dir):
+        origin = np.array([fs.slm.grid[0][0, 0], fs.slm.grid[1][0, 0]])
+        result = self._process(fs, _synthetic_superpixel_calibration(fs.slm, grid_origin=origin))
+        path = fs.save_calibration("wavefront_superpixel_processed", path=temp_dir)
+        fs_new = FourierSLM(camera_small, slm_small)
+        slm_small.reset_source()
+
+        fs_new.load_calibration("wavefront_superpixel_processed", file_path=path)
+        fs_new.wavefront_calibration_apply()
+
+        assert np.allclose(slm_small.source["phase"], result["phase"])
+
+    def test_apply_rejects_shape_mismatch(self, fs):
+        fs.calibrations["wavefront_superpixel_processed"] = {"phase": np.zeros((3, 4))}
+
+        with pytest.raises(ValueError, match="shape"):
+            fs.wavefront_calibration_apply()
