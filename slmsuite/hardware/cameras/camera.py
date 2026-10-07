@@ -341,7 +341,7 @@ class Camera(_Picklable, ABC):
         """
         raise NotImplementedError()
 
-    def flush(self, timeout_s=1):
+    def flush(self, timeout_s=2):
         """
         Cycle the image buffer such that all new :meth:`.get_image()` calls yield fresh frames.
         Without this feature, optimizations could be working on outdated information.
@@ -593,7 +593,7 @@ class Camera(_Picklable, ABC):
         else:
             raise ValueError(f"Datatype {self.dtype} does not make sense as a camera return.")
 
-    def get_image(self, timeout_s=1, transform=True, hdr=None, averaging=None):
+    def get_image(self, timeout_s=2, transform=True, hdr=None, averaging=None):
         """
         Capture, process, and return images from a camera.
 
@@ -709,7 +709,7 @@ class Camera(_Picklable, ABC):
 
         return img
 
-    def get_images(self, image_count, timeout_s=1, out=None, transform=True, flush=False):
+    def get_images(self, image_count, timeout_s=2, out=None, transform=True, flush=False):
         """
         Grab ``image_count`` images in succession.
 
