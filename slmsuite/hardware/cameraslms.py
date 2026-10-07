@@ -2724,6 +2724,7 @@ class FourierSLM(CameraSLM):
             ),
             "scheduling" : scheduling,
             "grid_origin" : np.array([slm_grid[0][0, 0], slm_grid[1][0, 0]]),
+            "grid_pitch" : np.array(self.slm.pitch, dtype=float),
         }
 
         keys = [
@@ -3685,10 +3686,14 @@ class FourierSLM(CameraSLM):
         Note
         ~~~~
         The blaze of each superpixel is evaluated in the grid frame recorded during
-        calibration (``"grid_origin"``), not on the current
+        calibration (``"grid_origin"`` and ``"grid_pitch"``), not on the current
         :attr:`~slmsuite.hardware.slms.slm.SLM.grid`, which
-        :meth:`~slmsuite.hardware.slms.slm.SLM.fit_source_amplitude()` may have recentered.
-        Calibrations without a recorded frame assume the default centered grid.
+        :meth:`~slmsuite.hardware.slms.slm.SLM.fit_source_amplitude()` may have recentered
+        and which changes scale with :attr:`~slmsuite.hardware.slms.slm.SLM.wav_um`.
+        Calibrations without a recorded origin assume the default centered grid.
+        Calibrations without a recorded pitch use the pitch in their metadata, or else the
+        current pitch of the SLM. The processed phase is in radians per pixel, so it does
+        not depend on the pitch.
         """
         # Step 0: Initialize helper variables and functions.
         if "wavefront_superpixel" in self.calibrations:
@@ -3751,9 +3756,16 @@ class FourierSLM(CameraSLM):
             for key in keys:
                 correction_dict.update({key: data[key][index]})
 
-            for key in ["grid_origin", "previous_phase_correction"]:
+            for key in ["grid_origin", "grid_pitch", "previous_phase_correction"]:
                 if key in data:
                     correction_dict[key] = data[key]
+
+            # Older calibrations only record the pitch in their metadata.
+            if "grid_pitch" not in correction_dict:
+                try:
+                    correction_dict["grid_pitch"] = data["__meta__"]["slm"]["pitch"]
+                except (KeyError, TypeError):
+                    pass
 
             return self._wavefront_calibration_superpixel_process_r001(
                 correction_dict,
@@ -3801,8 +3813,13 @@ class FourierSLM(CameraSLM):
             raise RuntimeError("No raw wavefront data to process. Either load data or calibrate.")
 
         # Read SLM geometry once; each attribute read is a transfer for a remote SLM.
+        # kx, ky, and grid_origin are in the normalized units of the pitch at calibration
+        # time, so that pitch defines the frame even if wav_um has changed since.
         slm_shape = tuple(int(n) for n in self.slm.shape)
-        pitch = np.array(self.slm.pitch, dtype=float)
+        if "grid_pitch" in data:
+            pitch = np.asarray(data["grid_pitch"], dtype=float)
+        else:
+            pitch = np.array(self.slm.pitch, dtype=float)
 
         if "grid_origin" in data:
             grid_origin = np.asarray(data["grid_origin"], dtype=float)
@@ -4091,6 +4108,7 @@ class FourierSLM(CameraSLM):
             "remove_background": remove_background,
             "superpixel_size": superpixel_size,
             "grid_origin": grid_origin,
+            "grid_pitch": pitch,
         }
         self._finalize_calibration("wavefront_superpixel_processed", wavefront_calibration)
 
