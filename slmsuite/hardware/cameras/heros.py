@@ -49,12 +49,14 @@ congested network. For measurement data, decorate the device-side
 
 import queue
 import time
-import warnings
 from typing import Any, Optional, Tuple
 
 import numpy as np
 
+from slmsuite._logging import make_logger
 from slmsuite.hardware.cameras.camera import Camera
+
+logger = make_logger(__name__)
 
 try:
     from heros import RemoteHERO
@@ -97,7 +99,6 @@ class HerosCamera(Camera):
         pitch_um: Optional[Tuple[float, float]] = None,
         queue_size: int = 64,
         probe_timeout_s: float = 10,
-        verbose: bool = True,
         **kwargs,
     ):
         """
@@ -159,8 +160,6 @@ class HerosCamera(Camera):
             consumer). Use ``0`` for an unbounded queue.
         probe_timeout_s : float
             Timeout for the probe frame used to infer ``resolution``/``bitdepth``.
-        verbose : bool
-            Whether to print extra information.
         **kwargs
             See :meth:`.Camera.__init__` for permissible options.
 
@@ -176,11 +175,8 @@ class HerosCamera(Camera):
                     "heros is required to construct a RemoteHERO from a name. "
                     "Install via `pip install heros`, or pass a proxy object directly."
                 )
-            if verbose:
-                print(f"Connecting to remote camera HERO '{camera}'...", end="")
+            logger.debug("Connecting to remote camera HERO '%s'...", camera)
             camera = RemoteHERO(camera)
-            if verbose:
-                print("success")
         self.cam = camera
 
         self.software_trigger = bool(software_trigger)
@@ -216,18 +212,17 @@ class HerosCamera(Camera):
         if configure is not None:
             try:
                 if not self.cam.configure(configure):
-                    warnings.warn(f"Remote configure('{configure}') returned False.")
+                    logger.warning("Remote configure('%s') returned False.", configure)
             except Exception as exc:
-                warnings.warn(f"Remote configure('{configure}') failed: {exc}")
+                logger.warning("Remote configure('%s') failed: %s", configure, exc)
 
         # Arm the device with its currently active (device-side) configuration.
         if arm and not self._acquisition_running:
-            self._arm(verbose=verbose)
+            self._arm()
 
         # Infer geometry/depth from a probe frame if not provided.
         if resolution is None or bitdepth is None:
-            if verbose:
-                print("Acquiring probe frame to infer camera parameters...", end="")
+            logger.debug("Acquiring probe frame to infer camera parameters...")
             frame = self._grab(timeout_s=probe_timeout_s)
             if frame is None:
                 raise RuntimeError(
@@ -237,23 +232,22 @@ class HerosCamera(Camera):
                     "(camera.cam.get_status()), and -- for hardware-triggered setups "
                     "-- that a trigger arrives within probe_timeout_s."
                 )
-            if verbose:
-                print("success")
             self._probe_dtype = frame.dtype
             if resolution is None:
                 # herosdevices emits (height, width); Camera expects (width, height)
                 resolution = (frame.shape[1], frame.shape[0])
             if bitdepth is None:
                 bitdepth = 8 * frame.dtype.itemsize
-                warnings.warn(
-                    f"HerosCamera inferred bitdepth={bitdepth} from frame dtype "
-                    f"{frame.dtype}. This is an upper bound (e.g. 12-bit sensors "
-                    "return uint16); pass bitdepth= explicitly for correct "
-                    "autoexposure scaling."
+                logger.warning(
+                    "HerosCamera inferred bitdepth=%d from frame dtype %s. This is an "
+                    "upper bound (e.g. 12-bit sensors return uint16); pass bitdepth= "
+                    "explicitly for correct autoexposure scaling.",
+                    bitdepth,
+                    frame.dtype,
                 )
 
         if self._acquisition_running is False:
-            self._arm(verbose=False)
+            self._arm()
 
         super().__init__(
             resolution,
@@ -294,7 +288,7 @@ class HerosCamera(Camera):
             try:
                 getattr(self.cam, event_name).disconnect(callback)
             except Exception as exc:
-                warnings.warn(f"Could not disconnect {event_name} callback: {exc}")
+                self.logger.warning("Could not disconnect %s callback: %s", event_name, exc)
         self.flush()
 
     ### Event callbacks (run in the heros networking thread)
@@ -317,9 +311,7 @@ class HerosCamera(Camera):
             else:
                 frame = data
         if frame is None:
-            warnings.warn(
-                f"HerosCamera received an unexpected event payload: {payload!r}"
-            )
+            logger.warning("HerosCamera received an unexpected event payload: %r", payload)
             return
 
         item = (np.asarray(frame), dict(metadata) if metadata else {})
@@ -350,23 +342,19 @@ class HerosCamera(Camera):
 
     ### Acquisition
 
-    def _arm(self, verbose: bool = False) -> bool:
+    def _arm(self) -> bool:
         """Arm the remote camera with its active device-side configuration."""
         try:
-            if verbose:
-                print("Arming remote camera...", end="")
             armed = bool(self.cam.arm(kill_running=True))
-            if verbose:
-                print("success" if armed else "failed")
         except Exception as exc:
-            warnings.warn(f"Could not arm remote camera: {exc}")
+            logger.warning("Could not arm remote camera: %s", exc)
             return False
         if armed:
             # arm() starting the device acquisition thread implies running; the
             # acquisition_started event will confirm asynchronously.
             self._acquisition_running = True
         else:
-            warnings.warn(
+            logger.warning(
                 "Remote camera arm() returned False; frame grabs may time out. "
                 "Check the device-side configuration (camera.cam.get_configuration())."
             )
@@ -400,9 +388,9 @@ class HerosCamera(Camera):
         except Exception as exc:
             # Non-fatal: free-running devices may reject a redundant trigger
             # (e.g. full device buffer) while still delivering frames.
-            warnings.warn(
-                f"Remote software trigger start() failed ({exc}); "
-                "waiting for a frame regardless."
+            logger.warning(
+                "Remote software trigger start() failed (%s); waiting for a frame regardless.",
+                exc,
             )
 
     def _pop(self, timeout_s: float) -> Optional[np.ndarray]:
@@ -605,7 +593,7 @@ class HerosCamera(Camera):
             try:
                 self.cam.stop()
             except Exception as exc:
-                warnings.warn(f"Could not stop acquisition before reconfiguring: {exc}")
+                logger.warning("Could not stop acquisition before reconfiguring: %s", exc)
             # wait for device to confirm acquisition has stopped
             deadline = time.monotonic() + stop_timeout_s
             while time.monotonic() < deadline:
@@ -617,30 +605,30 @@ class HerosCamera(Camera):
                     break
                 time.sleep(0.05)
             else:
-                warnings.warn(
-                    f"HerosCamera: acquisition did not stop within {stop_timeout_s} s; "
-                    "configuration may fail."
+                logger.warning(
+                    "HerosCamera: acquisition did not stop within %s s; configuration may fail.",
+                    stop_timeout_s,
                 )
         fn()
         if was_running:
-            self._arm(verbose=False)
+            self._arm()
 
     def _get_exposure_hw(self) -> float:
         """
         See :meth:`.Camera._get_exposure_hw`.
 
         Reads ``exposure_time`` from the remote ``CameraTemplate`` property.
-        Returns ``NaN`` (with a warning) if the property returns ``None`` (not set in
+        Returns ``NaN`` (with a logged warning) if the property returns ``None`` (not set in
         the active configuration) -- in that case :meth:`.Camera.autoexposure` and HDR
         features will not work.
         """
         try:
             val = self.cam.exposure_time
         except Exception as exc:
-            warnings.warn(f"HerosCamera could not read exposure_time: {exc}")
+            logger.warning("HerosCamera could not read exposure_time: %s", exc)
             return float("nan")
         if val is None:
-            warnings.warn(
+            logger.warning(
                 "HerosCamera: exposure_time is None (not set in the active config). "
                 "Exposure-dependent features (autoexposure, HDR) are unavailable; "
                 "add an exposure_time entry via camera.cam.update_configuration()."
