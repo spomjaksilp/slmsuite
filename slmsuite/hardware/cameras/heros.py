@@ -99,6 +99,7 @@ class HerosCamera(Camera):
         pitch_um: tuple[float, float] | None = None,
         queue_size: int = 64,
         probe_timeout_s: float = 10,
+        latency_s: float = 1.0,
         **kwargs,
     ):
         """
@@ -160,6 +161,10 @@ class HerosCamera(Camera):
             consumer). Use ``0`` for an unbounded queue.
         probe_timeout_s : float
             Timeout for the probe frame used to infer ``resolution``/``bitdepth``.
+        latency_s : float
+            Network margin in seconds, added to every frame timeout on top of the
+            exposure time that :meth:`.Camera.get_image` already adds. Covers the
+            round trip of the trigger RPC and the ``acquisition_data`` event.
         **kwargs
             See :meth:`.Camera.__init__` for permissible options.
 
@@ -182,6 +187,7 @@ class HerosCamera(Camera):
         self.software_trigger = bool(software_trigger)
         self.auto_rearm = bool(auto_rearm)
         self.rearm_grace_s = float(rearm_grace_s)
+        self.latency_s = float(latency_s)
         self.last_metadata = {}
         self.acquisition_metadata = {}
 
@@ -509,8 +515,9 @@ class HerosCamera(Camera):
         See :meth:`.Camera._get_image_hw`.
 
         The frame metadata emitted alongside the image by the remote device is stored
-        in :attr:`last_metadata`.
+        in :attr:`last_metadata`. :attr:`latency_s` is added to ``timeout_s``.
         """
+        timeout_s = timeout_s + self.latency_s
         frame = self._grab(timeout_s)
         if frame is None:
             raise TimeoutError(
@@ -532,7 +539,7 @@ class HerosCamera(Camera):
         With ``software_trigger=False``, frames are collected as they stream in
         (one external trigger per frame). With ``software_trigger=True``, one
         ``start()`` is fired per frame, since the generic ``CameraTemplate`` does not
-        expose a burst length.
+        expose a burst length. :attr:`latency_s` is added to ``timeout_s``.
         """
         first = self._get_image_hw(timeout_s)
         if out is None:
@@ -544,11 +551,12 @@ class HerosCamera(Camera):
             else:
                 self._ensure_armed()
                 try:
-                    frame, metadata = self._frames.get(timeout=timeout_s)
+                    frame, metadata = self._frames.get(timeout=timeout_s + self.latency_s)
                 except queue.Empty as exc:
                     raise TimeoutError(
                         f"HerosCamera received {i}/{image_count} frames before timing "
-                        f"out after {timeout_s} s waiting for the next trigger."
+                        f"out after {timeout_s + self.latency_s} s waiting for the next "
+                        "trigger."
                     ) from exc
                 self.last_metadata = metadata
                 out[i] = frame
