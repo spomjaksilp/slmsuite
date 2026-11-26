@@ -201,6 +201,7 @@ class HerosCamera(Camera):
         self.cam.acquisition_data.connect(self._frame_callback)
         self.cam.acquisition_started.connect(self._started_callback)
         self.cam.acquisition_stopped.connect(self._stopped_callback)
+        self._connected = True
 
         # Seed the state mirror with one (potentially slow) remote attribute read.
         try:
@@ -279,7 +280,12 @@ class HerosCamera(Camera):
         network resource and other clients may be subscribed to it. Use
         ``camera.cam.stop()`` / ``camera.cam.teardown()`` explicitly to control the
         device lifecycle.
+
+        Safe to call more than once; :class:`._Common` calls it again on deletion.
         """
+        if not getattr(self, "_connected", False):
+            return
+        self._connected = False
         for event_name, callback in (
             ("acquisition_data", self._frame_callback),
             ("acquisition_started", self._started_callback),
