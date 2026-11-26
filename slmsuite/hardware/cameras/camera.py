@@ -88,6 +88,14 @@ class Camera(_Common, ABC):
         "last_image",
     ]
 
+    exposure_bounds_s: tuple[float, float] | None
+    averaging: int | None
+    hdr: tuple[int, int] | None
+    color_channel: int | None
+    capture_attempts: int
+    transform: "analysis.OrientationTransform"
+    last_image: np.ndarray | None
+
     @abstractmethod
     def __init__(
         self,

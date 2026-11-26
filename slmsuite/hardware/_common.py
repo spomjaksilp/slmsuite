@@ -17,6 +17,13 @@ class _Common(_Viewable, _Loggable, ABC):
     Handles common properties and methods for both cameras and SLMs.
     """
 
+    name: str
+    shape: tuple[int, int]
+    bitdepth: int
+    dtype: np.dtype
+    pitch_um: np.ndarray | None
+    is_slm: bool
+
     def __init__(
         self,
         resolution,

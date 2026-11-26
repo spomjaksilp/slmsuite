@@ -15,6 +15,7 @@ import inspect
 import warnings
 import weakref
 from abc import ABC, abstractmethod
+from types import ModuleType
 from typing import ClassVar
 
 import matplotlib.pyplot as plt
@@ -157,6 +158,19 @@ class SLM(_Common, ABC):
         "display",
     ]
     _gamma_sign = -1  # Increasing grayscale decreases phase delay; +1 for the reverse.
+
+    wav_um: float
+    wav_design_um: float
+    settle_time_s: float
+    xp: ModuleType
+    aperture: "toolbox.Aperture"
+    source: "_Source"
+    phase: np.ndarray
+    display: np.ndarray
+    gamma: np.ndarray | None
+    lut: np.ndarray | None
+    phase_correct: bool
+    settle: bool
 
     @abstractmethod
     def __init__(

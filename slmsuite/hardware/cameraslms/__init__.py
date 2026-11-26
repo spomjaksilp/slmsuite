@@ -5,7 +5,7 @@ Datastructures, methods, and calibrations for an SLM monitored by a camera.
 import copy
 import os
 import warnings
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,6 +23,10 @@ from slmsuite.hardware.cameraslms._wavefront import _WavefrontCalibration
 from slmsuite.hardware.slms.simulated import SimulatedSLM
 from slmsuite.holography.analysis.files import generate_path, latest_path, load_h5, save_h5
 from slmsuite.misc.xp import as_numpy
+
+if TYPE_CHECKING:
+    from slmsuite.hardware.cameras.camera import Camera
+    from slmsuite.hardware.slms.slm import SLM
 
 
 class CameraSLM(_Loggable):
@@ -50,6 +54,12 @@ class CameraSLM(_Loggable):
 
     _pickle: ClassVar[list] = ["name", "cam", "slm", "mag"]
     _pickle_data: ClassVar[list] = []
+
+    name: str
+    cam: "Camera"
+    slm: "SLM"
+    mag: float | None
+    calibrations: dict
 
     def __init__(self, cam=None, slm=None, mag=1):
         """
@@ -275,6 +285,8 @@ class FourierSLM(
         "_wavefront_calibration_window_multiplier",
     ]
     _pickle_data: ClassVar[list] = ["calibrations"]
+
+    _wavefront_calibration_window_multiplier: int
 
     def __init__(self, *args, **kwargs):
         r"""See :meth:`CameraSLM.__init__`."""
