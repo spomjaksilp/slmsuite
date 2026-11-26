@@ -143,6 +143,11 @@ class HerosCamera(Camera):
             ``(width, height)`` of the camera. If ``None``, inferred from a probe
             frame (which requires a trigger source; with ``software_trigger=False``
             an external trigger must arrive within ``probe_timeout_s``).
+
+            Caution
+            ~~~~~~~
+            The probe frame is the full sensor only if the device has no ROI or
+            binning set. Otherwise pass ``resolution`` explicitly.
         bitdepth : int OR None
             Bit depth of the camera. If ``None``, inferred from the dtype of a probe
             frame.
@@ -241,6 +246,7 @@ class HerosCamera(Camera):
             if resolution is None:
                 # herosdevices emits (height, width); Camera expects (width, height)
                 resolution = (frame.shape[1], frame.shape[0])
+                self._warn_if_cropped(resolution)
             if bitdepth is None:
                 bitdepth = 8 * frame.dtype.itemsize
                 logger.warning(
@@ -298,6 +304,26 @@ class HerosCamera(Camera):
             except Exception as exc:
                 self.logger.warning("Could not disconnect %s callback: %s", event_name, exc)
         self.flush()
+
+    def _warn_if_cropped(self, resolution: tuple[int, int]) -> None:
+        """Warn if an active ROI or binning made the probe frame smaller than the sensor."""
+        try:
+            roi = self.cam.roi_coordinates
+        except Exception:
+            roi = None
+        try:
+            binning = self.cam.binning
+        except Exception:
+            binning = None
+        if roi is not None or (binning is not None and tuple(binning) != (1, 1)):
+            logger.warning(
+                "Inferred resolution %s from a probe frame while the device has "
+                "roi_coordinates=%s and binning=%s set; this is not the full sensor. "
+                "Pass resolution= explicitly.",
+                resolution,
+                roi,
+                binning,
+            )
 
     ### Event callbacks (run in the heros networking thread)
 
