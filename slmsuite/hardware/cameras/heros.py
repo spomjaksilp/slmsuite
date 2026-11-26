@@ -49,7 +49,7 @@ congested network. For measurement data, decorate the device-side
 
 import queue
 import time
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -93,10 +93,10 @@ class HerosCamera(Camera):
         auto_rearm: bool = True,
         rearm_grace_s: float = 0.5,
         arm: bool = True,
-        configure: Optional[str] = None,
-        resolution: Optional[Tuple[int, int]] = None,
-        bitdepth: Optional[int] = None,
-        pitch_um: Optional[Tuple[float, float]] = None,
+        configure: str | None = None,
+        resolution: tuple[int, int] | None = None,
+        bitdepth: int | None = None,
+        pitch_um: tuple[float, float] | None = None,
         queue_size: int = 64,
         probe_timeout_s: float = 10,
         **kwargs,
@@ -189,13 +189,11 @@ class HerosCamera(Camera):
         # executes in the heros networking thread; the Queue decouples it from the
         # (blocking) consumer in _get_image_hw(). Bounded with drop-oldest semantics
         # to limit memory for free-running acquisition without a consumer.
-        self._frames: "queue.Queue[Tuple[np.ndarray, dict]]" = queue.Queue(
-            maxsize=int(queue_size)
-        )
+        self._frames: queue.Queue[tuple[np.ndarray, dict]] = queue.Queue(maxsize=int(queue_size))
 
         # Local mirror of the device acquisition state, maintained via events to avoid
         # a remote attribute query on every grab. None = unknown (no event seen yet).
-        self._acquisition_running: Optional[bool] = None
+        self._acquisition_running: bool | None = None
 
         # Subscribe to the remote events (RemoteEventHandler.connect).
         self.cam.acquisition_data.connect(self._frame_callback)
@@ -254,9 +252,7 @@ class HerosCamera(Camera):
             resolution,
             bitdepth=int(bitdepth),
             pitch_um=pitch_um,
-            name=kwargs.pop(
-                "name", str(getattr(self.cam, "_hero_name", "heros_camera"))
-            ),
+            name=kwargs.pop("name", str(getattr(self.cam, "_hero_name", "heros_camera"))),
             **kwargs,
         )
 
@@ -399,7 +395,7 @@ class HerosCamera(Camera):
                 exc,
             )
 
-    def _pop(self, timeout_s: float) -> Optional[np.ndarray]:
+    def _pop(self, timeout_s: float) -> np.ndarray | None:
         """Blocking queue pop; stores metadata and returns the frame, or ``None``."""
         try:
             frame, metadata = self._frames.get(timeout=max(0.0, timeout_s))
@@ -408,7 +404,7 @@ class HerosCamera(Camera):
         self.last_metadata = metadata
         return frame
 
-    def _grab(self, timeout_s: float) -> Optional[np.ndarray]:
+    def _grab(self, timeout_s: float) -> np.ndarray | None:
         """
         Trigger (if configured to) and block until the next frame arrives.
 
@@ -469,9 +465,7 @@ class HerosCamera(Camera):
                         "or construct HerosCamera with auto_rearm=True."
                     )
                 if self._arm():
-                    frame = self._pop(
-                        min(self.rearm_grace_s, deadline - time.monotonic())
-                    )
+                    frame = self._pop(min(self.rearm_grace_s, deadline - time.monotonic()))
                     if frame is not None:
                         return frame
                     if self.software_trigger:
@@ -530,7 +524,7 @@ class HerosCamera(Camera):
         return frame
 
     def _get_images_hw(
-        self, image_count: int, timeout_s: float, out: Optional[np.ndarray] = None
+        self, image_count: int, timeout_s: float, out: np.ndarray | None = None
     ) -> np.ndarray:
         """
         See :meth:`.Camera._get_images_hw`.
