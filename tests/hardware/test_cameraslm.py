@@ -1803,6 +1803,18 @@ class TestWavefrontSuperpixelProcess:
 
         assert np.allclose(before, after)
 
+    def test_process_ignores_wavelength_change_after_calibration(self, fs):
+        origin = np.array([fs.slm.grid[0][0, 0], fs.slm.grid[1][0, 0]])
+        data = _synthetic_superpixel_calibration(fs.slm, grid_origin=origin)
+        data["grid_pitch"] = np.array(fs.slm.pitch)
+        before = self._process(fs, dict(data))["phase"]
+        # Changing wav_um rescales the normalized pitch of the SLM.
+        fs.slm.wav_um = fs.slm.wav_um * 0.759
+
+        after = self._process(fs, dict(data))["phase"]
+
+        assert np.allclose(before, after)
+
     def test_process_does_not_read_slm_grid(self, fs, monkeypatch):
         origin = np.array([fs.slm.grid[0][0, 0], fs.slm.grid[1][0, 0]])
         data = _synthetic_superpixel_calibration(fs.slm, grid_origin=origin)
