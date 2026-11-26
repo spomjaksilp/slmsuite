@@ -385,7 +385,10 @@ class FourierSLM(
         # The simulated sensor *is* the hardware's delivered image, so its raw pixels are
         # the hardware's "ij" pixels. Restate the Fourier calibration in that frame,
         # which is what makes kxyslm_to_ijcam() agree between the two.
-        fs_sim.calibrations["fourier"].update(self.fourier_affine.to_dict())
+        fs_sim.calibrations["fourier"] = {
+            **fs_sim.calibrations["fourier"],
+            **self.fourier_affine.to_dict(),
+        }
 
         # Radiometry: put the simulated camera on the hardware's count scale. This must
         # happen last, as it depends on the exposure, the WOI, and the displayed phase.
@@ -705,8 +708,7 @@ class FourierSLM(
                 )
             b = b - np.array([[woi[0]], [woi[2]]], dtype=float)
 
-        self.calibrations["fourier"]["M"] = M
-        self.calibrations["fourier"]["b"] = b
+        self.calibrations["fourier"] = {**self.calibrations["fourier"], "M": M, "b": b}
         self.cam.set_affine(M, b)
 
     ### Automatic Calibration ###
@@ -915,6 +917,25 @@ class FourierSLM(
 
     def _get_calibration_metadata(self):
         return self.pickle(attributes=False, metadata=True)  # Pickle without heavy data.
+
+    def _finalize_calibration(self, key: str, data: dict) -> dict:
+        """
+        Store ``data`` as ``calibrations[key]`` with the calibration metadata merged in.
+
+        Parameters
+        ----------
+        key : str
+            Calibration key, e.g. ``"fourier"`` or ``"pixel"``.
+        data : dict
+            Calibration data to store.
+
+        Returns
+        -------
+        dict
+            The stored ``calibrations[key]``.
+        """
+        self.calibrations[key] = {**data, **self._get_calibration_metadata()}
+        return self.calibrations[key]
 
     def _get_calibration_frame(self, key):
         """

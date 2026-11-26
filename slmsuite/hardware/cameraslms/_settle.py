@@ -141,14 +141,16 @@ class _SettleCalibration:
         finally:
             self.cam.set_exposure(exposure_prev)
 
-        self.calibrations["settle"] = {
-            "data": np.array(results),
-            "times": times,
-            "exposure_s": exposure_s,
-            "set_phase_time": np.array(results_set_phase_time),
-            "get_image_time": np.array(results_get_image_time),
-        }
-        self.calibrations["settle"].update(self._get_calibration_metadata())
+        self._finalize_calibration(
+            "settle",
+            {
+                "data": np.array(results),
+                "times": times,
+                "exposure_s": exposure_s,
+                "set_phase_time": np.array(results_set_phase_time),
+                "get_image_time": np.array(results_get_image_time),
+            },
+        )
 
         self.settle_calibration_process(plot=plot)
 
@@ -241,6 +243,6 @@ class _SettleCalibration:
             "relax_time": relax_time,
             "communication_time": com_time,
         }
-        self.calibrations["settle"].update(processed)
+        self.calibrations["settle"] = {**self.calibrations["settle"], **processed}
 
         return processed

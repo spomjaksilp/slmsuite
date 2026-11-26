@@ -191,17 +191,19 @@ class _FourierCalibration:
         kxyslm_to_ijcam = Affine(M, b, a)
         # kxyslm -> ijcam -> ijraw
         kxyslm_to_ijraw = self.cam._get_ijcam_to_ijraw() @ kxyslm_to_ijcam
-        self.calibrations["fourier"] = kxyslm_to_ijraw.to_dict()
-        self.calibrations["fourier"]["array"] = {
-            "array_shape": array_shape,
-            "array_pitch": array_pitch,
-            "array_center": array_center,
-            "autoexpose": autoexpose,
-            "autofocus": autofocus,
-        }
-        self.calibrations["fourier"].update(self._get_calibration_metadata())
-
-        return self.calibrations["fourier"]
+        return self._finalize_calibration(
+            "fourier",
+            {
+                **kxyslm_to_ijraw.to_dict(),
+                "array": {
+                    "array_shape": array_shape,
+                    "array_pitch": array_pitch,
+                    "array_center": array_center,
+                    "autoexpose": autoexpose,
+                    "autofocus": autofocus,
+                },
+            },
+        )
 
     ### Fourier Calibration Helpers ###
 
@@ -327,8 +329,7 @@ class _FourierCalibration:
 
         # kxyslm -> ijcam -> ijraw, as in _fourier_calibrate_single().
         kxyslm_to_ijraw = self.cam._get_ijcam_to_ijraw() @ Affine(M, b, a)
-        self.calibrations["fourier"] = kxyslm_to_ijraw.to_dict()
-        self.calibrations["fourier"].update(self._get_calibration_metadata())
+        self._finalize_calibration("fourier", kxyslm_to_ijraw.to_dict())
 
         # Set the camera's virtual calibration if it is not already set. A simulated
         # camera renders its full raw sensor, so its affine is the raw one.

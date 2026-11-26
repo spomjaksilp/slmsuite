@@ -1485,6 +1485,55 @@ class SLM(_Common, ABC):
 
         return self.source
 
+    def update_source(self, data: dict) -> dict:
+        """
+        Merge entries into :attr:`source`, replacing existing keys.
+
+        Callers outside the SLM should use this instead of writing into :attr:`source`
+        directly. For a remote SLM proxy, ``slm.source["phase"] = phase`` only changes
+        a local copy, while a method call runs on the SLM itself::
+
+            slm.update_source({"amplitude": amplitude, "phase": phase})
+
+        Parameters
+        ----------
+        data : dict
+            Key-value pairs to merge into :attr:`source`. Arrays are moved to
+            :attr:`xp`, as for any write into :attr:`source`.
+
+        Returns
+        -------
+        dict
+            The updated :attr:`source`.
+        """
+        self.source.update(data)
+        return self.source
+
+    def reset_source(self, *keys: str) -> dict:
+        """
+        Remove entries from :attr:`source`.
+
+        For example, to clear a wavefront calibration before measuring again::
+
+            slm.reset_source("amplitude", "phase", "r2")
+
+        Parameters
+        ----------
+        *keys : str
+            Keys to remove. Unknown keys are ignored. If no key is given,
+            :attr:`source` is cleared entirely.
+
+        Returns
+        -------
+        dict
+            The updated :attr:`source`.
+        """
+        if not keys:
+            self.source.clear()
+        for key in keys:
+            self.source.pop(key, None)
+        return self.source
+
     def _center_pix_to_norm(self, center_pix):
         """Convert a ``(x, y)`` pixel coordinate to the grid's normalized units."""
         center_pix = np.array(center_pix, dtype=float).ravel()

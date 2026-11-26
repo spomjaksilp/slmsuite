@@ -526,18 +526,18 @@ class _PixelCalibration:
             iterations.close()
 
         # Assemble the return dictionary.
-        self.calibrations["pixel"] = {
-            "levels": levels,
-            "periods": periods,
-            "orders": orders,
-            "directions": directions,
-            "vectors_kxy": vectors_kxy,
-            "order_ij": order_ij,
-            "data": data,
-        }
-        self.calibrations["pixel"].update(self._get_calibration_metadata())
-
-        return self.calibrations["pixel"]
+        return self._finalize_calibration(
+            "pixel",
+            {
+                "levels": levels,
+                "periods": periods,
+                "orders": orders,
+                "directions": directions,
+                "vectors_kxy": vectors_kxy,
+                "order_ij": order_ij,
+                "data": data,
+            },
+        )
 
     def _pixel_calibration_process_get_summed(self, orders=None, transpose=False):
         """
@@ -763,8 +763,11 @@ class _PixelCalibration:
 
             _slmsuite_plt_show(name="pixel_calibration_process_fit")
 
-        self.calibrations["pixel"]["gamma"] = gamma
-        self.calibrations["pixel"]["gamma_r2"] = r_squared
+        self.calibrations["pixel"] = {
+            **self.calibrations["pixel"],
+            "gamma": gamma,
+            "gamma_r2": r_squared,
+        }
 
         if apply:
             self._pixel_calibration_apply_gamma()

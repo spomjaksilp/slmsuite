@@ -475,7 +475,10 @@ class _WavefrontCalibrationZernike:
                 ],
             )
             if "wavefront_zernike" in self.calibrations:
-                self.calibrations["wavefront_zernike"]["weights"] = hologram.get_weights()
+                self.calibrations["wavefront_zernike"] = {
+                    **self.calibrations["wavefront_zernike"],
+                    "weights": hologram.get_weights(),
+                }
 
         no_perturbation = (
             perturbation is None
@@ -574,17 +577,19 @@ class _WavefrontCalibrationZernike:
         self.slm.set_phase(pattern, settle=True, phase_correct=False)
         metric_stats.append(callback())
 
-        self.calibrations["wavefront_zernike"] = {
-            "initial_points": initial_points,
-            "zernike_indices": zernike_indices,
-            "corrected_spots": calibration_points,
-            "last_result": result,
-            "calibration_points_ij": calibration_points_ij,
-            "spot_integration_width_ij": spot_integration_width_ij,
-            "metric_stats": metric_stats,
-            "weights": hologram.get_weights(),
-        }
-        self.calibrations["wavefront_zernike"].update(self._get_calibration_metadata())
+        self._finalize_calibration(
+            "wavefront_zernike",
+            {
+                "initial_points": initial_points,
+                "zernike_indices": zernike_indices,
+                "corrected_spots": calibration_points,
+                "last_result": result,
+                "calibration_points_ij": calibration_points_ij,
+                "spot_integration_width_ij": spot_integration_width_ij,
+                "metric_stats": metric_stats,
+                "weights": hologram.get_weights(),
+            },
+        )
 
         # return hologram
 

@@ -1858,8 +1858,11 @@ class Camera(_Common, ABC):
                 base_correction = slm.xp.zeros_like(base_phase)
 
             def slm_set_z(z_val):
-                slm.source["phase"] = base_correction + as_backend(
-                    zernike(slm, index=4, weight=z_val, use_mask=False), slm.xp
+                slm.update_source(
+                    {
+                        "phase": base_correction
+                        + as_backend(zernike(slm, index=4, weight=z_val, use_mask=False), slm.xp)
+                    }
                 )
                 slm.set_phase(base_phase, settle=True)
 

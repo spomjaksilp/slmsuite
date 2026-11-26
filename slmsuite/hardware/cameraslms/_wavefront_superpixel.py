@@ -461,15 +461,12 @@ class _WavefrontCalibrationSuperpixel:
         # If we're starting fresh, remove the old calibration such that this does not
         # muddle things. If we're only testing, the stored data above will be reinstated.
         if fresh_calibration:
-            self.slm.source.pop("amplitude", "First calibration.")
-            self.slm.source.pop("phase", "First calibration.")
-            self.slm.source.pop("r2", "First calibration.")
+            self.slm.reset_source("amplitude", "phase", "r2")
 
         def restore_source():
             """Reinstate the source stripped above."""
-            for key in ("amplitude", "phase", "r2"):
-                self.slm.source.pop(key, None)
-            self.slm.source.update(saved_source)
+            self.slm.reset_source("amplitude", "phase", "r2")
+            self.slm.update_source(saved_source)
 
         try:
             # Parse phase_steps
@@ -1229,10 +1226,7 @@ class _WavefrontCalibrationSuperpixel:
 
                             calibration_dict[key][i, coords[1, i], coords[0, i]] = result
 
-            self.calibrations["wavefront_superpixel"] = calibration_dict
-            self.calibrations["wavefront_superpixel"].update(self._get_calibration_metadata())
-
-            return calibration_dict
+            return self._finalize_calibration("wavefront_superpixel", calibration_dict)
         except BaseException:
             restore_source()
             raise
@@ -1695,7 +1689,7 @@ class _WavefrontCalibrationSuperpixel:
 
         # Step 4.1: Load the correction to the SLM
         if apply:
-            self.slm.source.update(wavefront_calibration)
+            self.slm.update_source(wavefront_calibration)
 
         # Plot the result
         if plot:
