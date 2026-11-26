@@ -29,9 +29,11 @@ Configuration model
 Device configuration (exposure, gain, ROI, trigger mode, ...) in ``herosdevices`` is
 intentionally device-specific and handled through named configuration dicts on the
 *device side* (``update_configuration()`` / ``configure()``). The :class:`CameraTemplate`
-properties ``exposure_time``, ``roi_coordinates``, and ``binning`` are used by
-:meth:`set_exposure`, :meth:`set_woi`, and :meth:`set_binning` respectively. All three
-setters require acquisition to be stopped before the device accepts configuration; this
+properties ``exposure_time``, ``roi_coordinates``, and ``binning`` back the hardware hooks
+of :meth:`.Camera.set_exposure`, :meth:`.Camera.set_woi`, and :meth:`.Camera.set_binning`.
+If the device does not list ``roi_coordinates`` or ``binning`` in its
+``supported_features()``, the WOI or binning is applied in software instead. All
+configuration requires acquisition to be stopped before the device accepts it; this
 wrapper automatically calls ``stop()`` and re-arms afterwards so callers need not manage
 acquisition state manually. The remote interface remains accessible via :attr:`HerosCamera.cam`.
 
@@ -250,11 +252,6 @@ class HerosCamera(Camera):
                     "autoexposure scaling."
                 )
 
-        # Sensor dimensions in herosdevices row-major convention: (height, width).
-        # Stored before super().__init__ because set_woi() is called from there.
-        # resolution here is always (width, height) per Camera convention.
-        self._sensor_shape: Tuple[int, int] = (int(resolution[1]), int(resolution[0]))
-
         if self._acquisition_running is False:
             self._arm(verbose=False)
 
@@ -267,6 +264,16 @@ class HerosCamera(Camera):
             ),
             **kwargs,
         )
+
+        # Camera.__init__ picks hardware WOI/binning because this class defines the
+        # hooks; fall back to software if the device does not support the feature.
+        try:
+            features = set(self.cam.supported_features())
+        except Exception:
+            features = None  # older herosdevices: assume support, as before
+        if features is not None:
+            self._software_woi = "roi_coordinates" not in features
+            self._software_binning = "binning" not in features
 
     def close(self):
         """
@@ -488,26 +495,26 @@ class HerosCamera(Camera):
 
     ### Required Camera subclass implementations
 
-    def _get_dtype(self, get_image_function=None):
+    def _get_dtype(self, test_data=None):
         """
-        See :meth:`.Camera._get_dtype`.
+        See :meth:`._Common._get_dtype`.
 
         Uses the probe frame dtype when available to avoid an extra frame grab during
         construction. Without a probe frame, forces the bitdepth-based fallback directly
         rather than trying (and timing out) a live grab.
         """
-        if get_image_function is None:
+        if test_data is None:
             probe = getattr(self, "_probe_dtype", None)
             if probe is not None:
 
-                def get_image_function(probe=probe):
+                def test_data(probe=probe):
                     return np.empty(0, dtype=probe)
             else:
 
-                def get_image_function():
+                def test_data():
                     raise RuntimeError("no probe frame; using bitdepth fallback")
 
-        return super()._get_dtype(get_image_function)
+        return super()._get_dtype(test_data)
 
     def _get_image_hw(self, timeout_s: float) -> np.ndarray:
         """
@@ -654,75 +661,69 @@ class HerosCamera(Camera):
 
         self._configure_hw(_apply)
 
-    def set_woi(self, woi=None):
+    def _get_woi_hw(self) -> tuple[int, int, int, int]:
         """
-        Set the hardware region of interest on the remote device.
+        See :meth:`.Camera._get_woi_hw`.
 
-        Translates the slmsuite ``(x_min, x_max, y_min, y_max)`` WOI format into the
-        herosdevices ``(x_offset, y_offset, width, height)`` ``roi_coordinates`` format
-        and pushes it to the device. The device will emit frames sized to the ROI,
-        reducing network traffic proportionally.
+        Reads ``roi_coordinates`` ``(x_offset, y_offset, width, height)`` from the
+        remote device and converts it from unbinned sensor pixels to the binned
+        coordinates :meth:`.Camera.get_woi` expects. Falls back to the full sensor if
+        the ROI is unset or unsupported.
+        """
+        try:
+            roi = self.cam.roi_coordinates
+        except Exception:
+            roi = None
+        binx, biny = self._binning
+        if roi is None:
+            height, width = self._shape
+            return (0, width // binx, 0, height // biny)
+        x, y, w, h = (int(v) for v in roi)
+        return (x // binx, w // binx, y // biny, h // biny)
 
-        When ``woi=None`` (full-frame reset), the hardware call is skipped: the device
-        already emits full frames by default, and this path is also taken during
-        construction (called from ``Camera.__init__``). To explicitly push a full-frame
-        ROI to the device, pass ``woi=(0, width, 0, height)`` directly.
+    def _set_woi_hw(self, woi: tuple[int, int, int, int]) -> None:
+        """
+        See :meth:`.Camera._set_woi_hw`.
 
+        Translates the slmsuite ``(x, w, y, h)`` WOI into the herosdevices
+        ``(x_offset, y_offset, width, height)`` ``roi_coordinates`` and pushes it to
+        the device, which then emits frames sized to the ROI. herosdevices expects
+        unbinned sensor pixels, so the binned WOI is scaled by the current binning.
         Automatically stops and re-arms the acquisition if it is currently running.
-
-        Parameters
-        ----------
-        woi : tuple OR None
-            Window of interest ``(x_min, x_max, y_min, y_max)`` in sensor pixels.
-            x is the column axis (width direction), y is the row axis (height direction).
-            All values are clipped to the sensor bounds.
-            If ``None``, reset local bookkeeping to the full sensor frame without a
-            hardware call.
-
-        Returns
-        -------
-        tuple
-            The resulting WOI ``(x_min, x_max, y_min, y_max)``.
         """
-        # _sensor_shape is (height, width) matching herosdevices row-major frames.
-        sensor_h, sensor_w = self._sensor_shape
-        if woi is None:
-            self.woi = (0, sensor_w, 0, sensor_h)
-            self.shape = (sensor_h, sensor_w)
-            return self.woi
-        woi = (
-            max(0, int(woi[0])),
-            min(sensor_w, int(woi[1])),
-            max(0, int(woi[2])),
-            min(sensor_h, int(woi[3])),
-        )
-        # herosdevices roi_coordinates: (x_offset, y_offset, width, height)
-        roi = (woi[0], woi[2], woi[1] - woi[0], woi[3] - woi[2])
+        binx, biny = self._binning
+        x, w, y, h = (int(v) for v in woi)
+        roi = (x * binx, y * biny, w * binx, h * biny)
 
         def _apply():
             self.cam.roi_coordinates = roi
 
         self._configure_hw(_apply)
-        self.woi = woi
-        self.shape = (woi[3] - woi[2], woi[1] - woi[0])
-        return self.woi
 
-    def set_binning(self, binning=None):
+    def _get_binning_hw(self) -> tuple[int, int]:
         """
-        Set the hardware binning on the remote device.
+        See :meth:`.Camera._get_binning_hw`.
 
-        Automatically stops and re-arms the acquisition if it is currently running.
-
-        Parameters
-        ----------
-        binning : (int, int) OR None
-            ``(horizontal, vertical)`` binning factors. ``None`` resets to ``(1, 1)``.
+        Reads ``binning`` from the remote device; ``(1, 1)`` if unset or unsupported.
         """
+        try:
+            binning = self.cam.binning
+        except Exception:
+            binning = None
         if binning is None:
-            binning = (1, 1)
-        h, v = int(binning[0]), int(binning[1])
+            return (1, 1)
+        return (int(binning[0]), int(binning[1]))
+
+    def _set_binning_hw(self, binning: tuple[int, int]) -> None:
+        """
+        See :meth:`.Camera._set_binning_hw`.
+
+        Sets ``(horizontal, vertical)`` binning on the remote device. Automatically
+        stops and re-arms the acquisition if it is currently running.
+        """
+        binx, biny = int(binning[0]), int(binning[1])
 
         def _apply():
-            self.cam.binning = (h, v)
+            self.cam.binning = (binx, biny)
 
         self._configure_hw(_apply)
