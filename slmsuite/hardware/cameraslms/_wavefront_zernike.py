@@ -475,10 +475,7 @@ class _WavefrontCalibrationZernike:
                 ],
             )
             if "wavefront_zernike" in self.calibrations:
-                self.calibrations["wavefront_zernike"] = {
-                    **self.calibrations["wavefront_zernike"],
-                    "weights": hologram.get_weights(),
-                }
+                self.update_calibration("wavefront_zernike", {"weights": hologram.get_weights()})
 
         no_perturbation = (
             perturbation is None

@@ -243,6 +243,6 @@ class _SettleCalibration:
             "relax_time": relax_time,
             "communication_time": com_time,
         }
-        self.calibrations["settle"] = {**self.calibrations["settle"], **processed}
+        self.update_calibration("settle", processed)
 
         return processed

@@ -763,11 +763,7 @@ class _PixelCalibration:
 
             _slmsuite_plt_show(name="pixel_calibration_process_fit")
 
-        self.calibrations["pixel"] = {
-            **self.calibrations["pixel"],
-            "gamma": gamma,
-            "gamma_r2": r_squared,
-        }
+        self.update_calibration("pixel", {"gamma": gamma, "gamma_r2": r_squared})
 
         if apply:
             self._pixel_calibration_apply_gamma()

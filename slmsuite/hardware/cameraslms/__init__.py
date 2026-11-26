@@ -120,6 +120,59 @@ class CameraSLM(_Loggable):
         _Loggable.__init__(self)
         self.log_state()
 
+    def update_calibration(self, key: str, data: dict) -> dict:
+        """
+        Merge entries into ``calibrations[key]``, replacing existing keys.
+
+        For example, to add processed results to a measured calibration::
+
+            fs.update_calibration("settle", {"settle_time": 0.12, "relax_time": 0.03})
+
+        Parameters
+        ----------
+        key : str
+            Calibration key, e.g. ``"settle"`` or ``"wavefront_zernike"``.
+        data : dict
+            Key-value pairs to merge into the existing entry.
+
+        Returns
+        -------
+        dict
+            The updated ``calibrations[key]``.
+
+        Raises
+        ------
+        KeyError
+            If ``key`` is not in :attr:`calibrations`.
+        """
+        self.calibrations[key] = {**self.calibrations[key], **data}
+        return self.calibrations[key]
+
+    def reset_calibration(self, *keys: str) -> dict:
+        """
+        Remove calibrations from :attr:`calibrations`.
+
+        For example, to clear stored calibrations before measuring again::
+
+            fs.reset_calibration("wavefront_superpixel", "wavefront_zernike")
+
+        Parameters
+        ----------
+        *keys : str
+            Calibration keys to remove. Unknown keys are ignored. If no key is given,
+            :attr:`calibrations` is cleared entirely.
+
+        Returns
+        -------
+        dict
+            The updated :attr:`calibrations`.
+        """
+        if not keys:
+            self.calibrations = {}
+        else:
+            self.calibrations = {k: v for k, v in self.calibrations.items() if k not in keys}
+        return self.calibrations
+
     def plot(
         self,
         phase=None,
@@ -397,10 +450,7 @@ class FourierSLM(
         # The simulated sensor *is* the hardware's delivered image, so its raw pixels are
         # the hardware's "ij" pixels. Restate the Fourier calibration in that frame,
         # which is what makes kxyslm_to_ijcam() agree between the two.
-        fs_sim.calibrations["fourier"] = {
-            **fs_sim.calibrations["fourier"],
-            **self.fourier_affine.to_dict(),
-        }
+        fs_sim.update_calibration("fourier", self.fourier_affine.to_dict())
 
         # Radiometry: put the simulated camera on the hardware's count scale. This must
         # happen last, as it depends on the exposure, the WOI, and the displayed phase.
@@ -720,7 +770,7 @@ class FourierSLM(
                 )
             b = b - np.array([[woi[0]], [woi[2]]], dtype=float)
 
-        self.calibrations["fourier"] = {**self.calibrations["fourier"], "M": M, "b": b}
+        self.update_calibration("fourier", {"M": M, "b": b})
         self.cam.set_affine(M, b)
 
     ### Automatic Calibration ###
